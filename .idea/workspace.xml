@@ -80,7 +80,7 @@
       <file leaf-file-name="Scheme.java" pinned="false" current="true" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/src/clloyd/Scheme.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state line="1230" column="23" selection-start="51612" selection-end="51612" vertical-scroll-proportion="0.3816717">
+            <state line="793" column="65" selection-start="30977" selection-end="30977" vertical-scroll-proportion="0.3326791">
               <folding>
                 <element signature="imports" expanded="true" />
               </folding>
@@ -567,7 +567,7 @@
     <supportedVersion>125</supportedVersion>
   </component>
   <component name="ToolWindowManager">
-    <frame x="391" y="22" width="1260" height="1141" extended-state="0" />
+    <frame x="434" y="22" width="1260" height="1141" extended-state="0" />
     <editor active="true" />
     <layout>
       <window_info id="Changes" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" weight="0.33" sideWeight="0.5" order="8" side_tool="false" content_ui="tabs" />
@@ -728,7 +728,7 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/src/clloyd/Scheme.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state line="1230" column="23" selection-start="51612" selection-end="51612" vertical-scroll-proportion="0.3816717">
+        <state line="793" column="65" selection-start="30977" selection-end="30977" vertical-scroll-proportion="0.3326791">
           <folding>
             <element signature="imports" expanded="true" />
           </folding>

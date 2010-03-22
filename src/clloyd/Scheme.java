@@ -754,7 +754,6 @@ public final class Scheme {
         builtinFunctionsMap.put(Identifier.get(LambdaFunction.Name), new LambdaFunction());
         builtinFunctionsMap.put(Identifier.get(DefineFunction.Name), new DefineFunction());
         builtinFunctionsMap.put(Identifier.get(SetBangFunction.Name), new SetBangFunction());
-        builtinFunctionsMap.put(Identifier.get("old-let"), new LambdaBasedLetFunction());
         builtinFunctionsMap.put(Identifier.get(SimpleLetFunction.Name), new SimpleLetFunction());
 
         builtinFunctionsMap.put(Identifier.get(ConsFunction.Name), new ConsFunction());
@@ -764,7 +763,6 @@ public final class Scheme {
         builtinFunctionsMap.put(Identifier.get(WhileFunction.Name), new WhileFunction());
         builtinFunctionsMap.put(Identifier.get(EvalFunction.Name), new EvalFunction());
         builtinFunctionsMap.put(Identifier.get(ApplyFunction.Name), new ApplyFunction());
-        //builtinFunctionsMap.put(Identifier.get(MapFunction.Name), new MapFunction()); todo dead code
 
         // predicates
         builtinFunctionsMap.put(Identifier.get(BinaryLessThanFunction.Name), new BinaryLessThanFunction());
@@ -1119,90 +1117,6 @@ public final class Scheme {
             final ConsCell body = args.cdr();
             final FunctionClosure functionClosure = new FunctionClosure(formalParameters, body, environment);
             return functionClosure;
-        }
-
-        public Atom eval(final Environment environment) {
-            return this;
-        }
-
-        public void print(final PrintStream printStream) {
-            printStream.print(Name);
-        }
-    }
-
-
-    /********************************************************************
-     *
-     * LambdaBasedLetFunction is the builtin function that puts a series of key/value pair into a new environment
-     * and then evaluates the body.
-     * (let ((a x)) (b y) (c z)) atom)
-     * or
-     * (let bindings-list body)
-     * todo this is quick and dirty hack -- real implementation should be done in scheme code
-     * todo using lambda and probably requires a modification to FunctionClosure so that it
-     * todo can be used as a "macro" facility which does not evaluate its args before the function
-     * todo evaluates.
-     *
-     * todo: rather than implement this in scheme (since its such a basic part of the system)
-     * todo: I should modify LambdaFunction to allow for passing in a completed executionEnv
-     * todo: Or is it the case that FunctionClosure should be implemented in terms of a let construct?
-     *
-     * @deprecated This initial version has been deprecated because I don't like the fact that leverages off
-     * "lambda" per all the texts out there.  The problem is that this generates a lot of garbage as a result
-     * because we are forced to build lists of formals and lists or arg expressions and then allocate a FunctionClosure
-     * (which is what lambda does) so it can deal with these new forms of the args.  The FunctionClosure does
-     * buy you the feature of "Closure" in that it captures the environment in which the lambda executes and that
-     * allows the FunctionClosure to be passed around and still have the proper lexical scoping.  However,
-     * the way let is constructed, its not possible to pass this closure around so its simply a waste.  The SimpleLetFunction
-     * which replaces this operates in the obvious way -- it binds the arg values into a new environment and
-     * evaluates the body of the let in that new environment.  If a lambda is executed in the body of the let, the proper
-     * thing happens.
-     */
-    private static final class LambdaBasedLetFunction implements BuiltinFunction {
-        private static final String Name = "let";
-
-        // todo, this code is a mess -- we should simply build the Env directly without repackaging the formals and args.
-        private static ConsCell _extractCars(final ConsCell bindingsList) {
-            final ConsCell consCell;
-            if (bindingsList == ConsCell.EmptyList) {
-                consCell = ConsCell.EmptyList;
-            }
-            else {
-                final ConsCell binding = (ConsCell)bindingsList.car();
-                final Atom id = binding.car();
-                final ConsCell remainingBindings = bindingsList.cdr();
-                final ConsCell nextConsCell = _extractCars(remainingBindings);
-                consCell = new ConsCell(id, nextConsCell);
-            }
-            return consCell;
-        }
-
-        // todo, this code is a mess -- we should simply build the Env directly without repackaging the formals and args.
-        private static ConsCell _extractCadrs(final ConsCell bindingsList) {
-            final ConsCell consCell;
-            if (bindingsList == ConsCell.EmptyList) {
-                consCell = ConsCell.EmptyList;
-            }
-            else {
-                final ConsCell binding = (ConsCell)bindingsList.car();
-                final Atom arg = binding.cadr();
-                final ConsCell remainingBindings = bindingsList.cdr();
-                final ConsCell nextConsCell = _extractCadrs(remainingBindings);
-                consCell = new ConsCell(arg, nextConsCell);
-            }
-            return consCell;
-        }
-
-        public Atom apply(final ConsCell args, final Environment environment) {
-            // Note: bindingsList is of the form '((id1 arg1) (id2 arg2) (...))
-            final ConsCell bindingsList = (ConsCell)args.car();
-            final ConsCell body = args.cdr();
-
-            final ConsCell formalParams = _extractCars(bindingsList);
-            final ConsCell functionArgs = _extractCadrs(bindingsList);
-
-            final FunctionClosure functionClosure = new FunctionClosure(formalParams, body, environment);
-            return functionClosure.apply(functionArgs, environment);
         }
 
         public Atom eval(final Environment environment) {
@@ -1920,60 +1834,4 @@ public final class Scheme {
         }
 
     }
-
-    ///////////////////////////
-    //
-    //  Dead Code
-    //
-    ///////////////////////////
-
-    /********************************************************************
-     *
-     * MapFunction
-     * Expects form: (map fn list)
-     * where fn is a function expecting 1 arg
-     * todo note this is not needed as it can be implemented in Scheme code itself as:
-     * > (define map (lambda (proc items) (if (null? items) '() (cons (proc (car items)) (map proc (cdr items))))))
-     * > (map double '(5 6 7 8))
-     *   (10 12 14 16)
-     *
-     */
-//    private static final class MapFunction implements BuiltinFunction {
-//        private static final String Name = "map";
-//
-//        private static ConsCell _apply(final BuiltinFunction function, final ConsCell argsList, final Environment environment) {
-//            final ConsCell resultList;
-//            if (argsList != ConsCell.EmptyList) {
-//                final Atom argAtom = argsList.car();
-//                final ConsCell argCell = new ConsCell(argAtom, ConsCell.EmptyList);
-//                final Atom resultAtom = function.apply(argCell, environment);
-//                final ConsCell argsListRemainder = argsList.cdr();
-//                final ConsCell nextConsCell = _apply(function, argsListRemainder, environment);
-//                resultList = new ConsCell(resultAtom, nextConsCell);
-//            }
-//            else {
-//                resultList = ConsCell.EmptyList;
-//            }
-//            return resultList;
-//        }
-//
-//        public Atom apply(final ConsCell args, final Environment environment) {
-//            final Atom functionReference = args.car();
-//            final BuiltinFunction function = (BuiltinFunction)functionReference.eval(environment);
-//            final Atom argsListAtom = args.cadr();
-//            final ConsCell argsList = (ConsCell)argsListAtom.eval(environment);
-//            final ConsCell resultList = _apply(function, argsList, environment);
-//            return resultList;
-//        }
-//
-//        public Atom eval(final Environment environment) {
-//            return this;
-//        }
-//
-//        public void print(final PrintStream printStream) {
-//            printStream.print(Name);
-//        }
-//    }
-
-
 }
