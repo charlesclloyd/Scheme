@@ -19,21 +19,6 @@
     <disable_hints />
   </component>
   <component name="DebuggerManager">
-    <line_breakpoints>
-      <breakpoint url="file://$PROJECT_DIR$/src/clloyd/SchemeTest.java" line="107" class="clloyd.SchemeTest" package="clloyd">
-        <option name="ENABLED" value="true" />
-        <option name="LOG_ENABLED" value="false" />
-        <option name="LOG_EXPRESSION_ENABLED" value="false" />
-        <option name="SUSPEND_POLICY" value="SuspendAll" />
-        <option name="COUNT_FILTER_ENABLED" value="false" />
-        <option name="COUNT_FILTER" value="0" />
-        <option name="CONDITION_ENABLED" value="false" />
-        <option name="CLASS_FILTERS_ENABLED" value="false" />
-        <option name="INSTANCE_FILTERS_ENABLED" value="false" />
-        <option name="CONDITION" value="" />
-        <option name="LOG_MESSAGE" value="" />
-      </breakpoint>
-    </line_breakpoints>
     <breakpoint_any>
       <breakpoint>
         <option name="NOTIFY_CAUGHT" value="true" />
@@ -92,10 +77,21 @@
   <component name="FileColors" enabled="true" enabledForTabs="true" />
   <component name="FileEditorManager">
     <leaf>
-      <file leaf-file-name="Scheme.java" pinned="false" current="true" current-in-tab="true">
+      <file leaf-file-name="Scheme.java" pinned="false" current="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/src/clloyd/Scheme.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state line="795" column="41" selection-start="31146" selection-end="31146" vertical-scroll-proportion="0.3326791">
+            <state line="776" column="48" selection-start="30500" selection-end="30500" vertical-scroll-proportion="0.0">
+              <folding>
+                <element signature="imports" expanded="true" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file leaf-file-name="SchemeTest.java" pinned="false" current="true" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/clloyd/SchemeTest.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state line="19" column="3" selection-start="436" selection-end="436" vertical-scroll-proportion="0.22374877">
               <folding>
                 <element signature="imports" expanded="true" />
               </folding>
@@ -116,8 +112,8 @@
         <option value="$PROJECT_DIR$/src/StreamTokenizer.java" />
         <option value="$PROJECT_DIR$/src/pmilne/StreamTokenizer.java" />
         <option value="$PROJECT_DIR$/src/pmilne/SchemeTokenizer.java" />
-        <option value="$PROJECT_DIR$/src/clloyd/SchemeTest.java" />
         <option value="$PROJECT_DIR$/src/clloyd/Scheme.java" />
+        <option value="$PROJECT_DIR$/src/clloyd/SchemeTest.java" />
       </list>
     </option>
   </component>
@@ -742,18 +738,18 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/clloyd/SchemeTest.java">
+    <entry file="file://$PROJECT_DIR$/src/clloyd/Scheme.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state line="108" column="73" selection-start="4914" selection-end="4914" vertical-scroll-proportion="0.35313532">
+        <state line="776" column="48" selection-start="30500" selection-end="30500" vertical-scroll-proportion="0.0">
           <folding>
             <element signature="imports" expanded="true" />
           </folding>
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/clloyd/Scheme.java">
+    <entry file="file://$PROJECT_DIR$/src/clloyd/SchemeTest.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state line="795" column="41" selection-start="31146" selection-end="31146" vertical-scroll-proportion="0.3326791">
+        <state line="19" column="3" selection-start="436" selection-end="436" vertical-scroll-proportion="0.22374877">
           <folding>
             <element signature="imports" expanded="true" />
           </folding>

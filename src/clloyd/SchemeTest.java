@@ -70,10 +70,7 @@ public class SchemeTest {
         Assert.assertEquals(666, integerAtom.intValue());
         integerAtom = (IntegerAtom)schemeInterpreter.readAndEval("begin-c");
         Assert.assertEquals(777, integerAtom.intValue());
-<<<<<<< HEAD
-=======
         // todo add fib test
->>>>>>> 4b6b0d40e4350222dba9edc544aca333e6d323ae
 
     }
 
@@ -109,10 +106,6 @@ public class SchemeTest {
 
     private void testEnvironmentCapture(final SchemeInterpreter schemeInterpreter) {
         schemeInterpreter.readAndEval("(define my-counter (let ((count 0)) (lambda () (set! count (b+ count 1)) count)))");
-<<<<<<< HEAD
-=======
-        // todo add check of return value from this define/let expression
->>>>>>> 4b6b0d40e4350222dba9edc544aca333e6d323ae
         IntegerAtom integerAtom = (IntegerAtom)schemeInterpreter.readAndEval("(my-counter)");
         Assert.assertEquals(1, integerAtom.intValue());
 
