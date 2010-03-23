@@ -27,7 +27,7 @@ import java.util.Stack;
  * todo: also can try caching the "slot" for the lexical scope since that is fixed once established
  * todo: consider implementing all of the BuiltinFunctionMap as anonymous inner classes -- makes them each look more like function pointers.
  * todo: convert SmallMap over to be an Environment itself?  Cache the index of each lookup on the Identifier (each identifier must be separate)
- * todo: when caching is used, we must be able to invalidate the cache if some operation ocurs that 
+ * todo: when caching is used, we must be able to invalidate the cache if some operation ocurs that
  * todo: right now all values must be Atoms.  This constrains what can be passed in and out.  Reconsider.
  * todo: add the other primitive predicates (eq?, etc)
  * todo: add support for Vector data type and add code to convert lists into Vectors (see SchemeDefinition)
@@ -1025,7 +1025,7 @@ public final class Scheme {
         }
         
         private static final Identifier DotIdentifier = Identifier.get(".");
-        
+
         /**
          * This applies the args for formalParams which is defined as a list.  Both the formalParms list and
          * the args list are walked in parallel
@@ -1191,7 +1191,7 @@ public final class Scheme {
             printStream.print(Name);
         }
     }
-    
+
     /********************************************************************
      *
      * DefineFunction is the builtin function that puts a key/value pair into the current environment.
