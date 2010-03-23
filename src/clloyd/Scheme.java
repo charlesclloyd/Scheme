@@ -23,6 +23,7 @@ import java.util.Stack;
  * Date: Mar 13, 2010
  * Time: 11:59:04 AM
  *
+ * todo: The global scope should really just be a local scope from a lambda which is the function that IS the interpreter.
  * todo: now that Scope with stacks has failed, need to try the index caching for fast lookup
  * todo: also can try caching the "slot" for the lexical scope since that is fixed once established
  * todo: consider implementing all of the BuiltinFunctionMap as anonymous inner classes -- makes them each look more like function pointers.
