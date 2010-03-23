@@ -7,13 +7,8 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.Reader;
 import java.io.StringReader;
-import java.util.AbstractMap.SimpleImmutableEntry;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.Stack;
 
 
@@ -23,8 +18,9 @@ import java.util.Stack;
  * Date: Mar 13, 2010
  * Time: 11:59:04 AM
  *
+ * todo: search for appearances of "._" to indicate direct access to ivars and cleanup.
  * todo: consider implementing all of the BuiltinFunctionMap as anonymous inner classes -- makes them each look more like function pointers.
- * todo: convert SmallMap over to be an Environment itself?  Cache the index of each lookup on the Identifier (each identifier must be separate)
+ * todo: convert SmallMap over to be an Scope itself?  Cache the index of each lookup on the Identifier (each identifier must be separate)
  * todo: when caching is used, we must be able to invalidate the cache if some operation ocurs that 
  * todo: right now all values must be Atoms.  This constrains what can be passed in and out.  Reconsider.
  * todo: add the other primitive predicates (eq?, etc)
@@ -44,14 +40,14 @@ import java.util.Stack;
 
  * todo: Optimizations Optimizations Optimizations Optimizations Optimizations
  *
- * todo: about the only place where I feel like optimizations need to be made are in the area of the Environment and
+ * todo: about the only place where I feel like optimizations need to be made are in the area of the Scope and
  * todo: Identifier evaluation.  Some form of caching would be good (eg cache the index of the value in the env)
  * todo: however the fact that define can change the environment's keys presents problems.  Perhaps each env
  * todo: can maintain a "version" number that is increased when a define is executed and, if the version number is
  * todo: different, we ignore the cache.
  *
- * todo: look into changing the implementation of Environment to use Binding[] and then see if we an cache the index of the Binding in that array
- *       todo: and the index of the environment (how many environments up we need to go)  Then we can either walk that number or try to use an Environment[]
+ * todo: look into changing the implementation of Scope to use Binding[] and then see if we an cache the index of the Binding in that array
+ *       todo: and the index of the environment (how many environments up we need to go)  Then we can either walk that number or try to use an Scope[]
  *       todo: which maintains the stack of environments.  Given that the length of these arrays will general be very short, I think it probbably makes sense
  *       todo: to just use the chaining.  However, a large number of refs will come from the Global scope so this could speed up those lookups considerably.
  */
@@ -69,20 +65,28 @@ public final class Scheme {
      *
      */
     public static final class SchemeInterpreter {
-        private final Environment _globalEnvironment;
-        
+        private final Scope _globalScope;
+        private final Identifier _readFunctionIdentifier;
+
         public SchemeInterpreter() {
-            _globalEnvironment = new MapEnvironment(null, 64);
-            initGlobalEnvironment(_globalEnvironment);
-            loadStandardFunctions();
+            _globalScope = new Scope(null, ConsCell.EmptyList);
+            initGlobalEnvironment(_globalScope);
+            _readFunctionIdentifier = Identifier.get("read");  // todo this is not cool
+            loadStandardFunctions();  // todo get this working
         }
 
-        private static void initGlobalEnvironment(final Environment globalEnvironment) {
+        private static void initGlobalEnvironment(final Scope globalScope) {
+            // Constants
+            globalScope.define(Identifier.get(BooleanAtom.TrueName), BooleanAtom.True);
+            globalScope.define(Identifier.get(BooleanAtom.FalseName), BooleanAtom.False);
+            
             // Add all the singleton BuiltingFunctions and Contstants
-            globalEnvironment.putAll(BuiltinFunctionMap);
+            for (final Map.Entry<String, BuiltinFunction>entry : BuiltinFunctionMap.entrySet()) {
+                final Identifier identifier = Identifier.get(entry.getKey());
+                globalScope.define(identifier, entry.getValue());
+            }
             // Other
-            globalEnvironment.put(Identifier.get("env"), globalEnvironment);
-            globalEnvironment.put(Identifier.get("prompt"), new StringAtom("> "));
+            globalScope.define(Identifier.get("prompt"), new StringAtom("> "));
         }
 
         private void loadStandardFunctions() {
@@ -105,30 +109,30 @@ public final class Scheme {
         }
 
         private Atom parseAtom(final Reader reader) {
-            final ReadFunction readFunction = (ReadFunction)_globalEnvironment.get(Identifier.get(ReadFunction.Name));
+            final ReadFunction readFunction = (ReadFunction)_readFunctionIdentifier.eval(_globalScope);
             // todo need to be able to pass a reader to the read function without this hack
-            //final Atom parsedAtom = readFunction.apply(null, _globalEnvironment);
-            final Atom parsedAtom = readFunction.apply(null, _globalEnvironment, reader);
+            //final Atom parsedAtom = readFunction.apply(null, _globalScope);
+            final Atom parsedAtom = readFunction.apply(null, _globalScope, reader);
             return parsedAtom;
         }
 
         public Atom readAndEval(final String string) {
             final Reader reader = new StringReader(string);
             final Atom parsedAtom = parseAtom(reader);
-            final Atom resultAtom = parsedAtom.eval(_globalEnvironment);
+            final Atom resultAtom = parsedAtom.eval(_globalScope);
             return resultAtom;
         }
 
         public void run(final Reader reader, final PrintStream printStream) {
             while(true) {
-                final StringAtom prompt = (StringAtom)_globalEnvironment.get(Identifier.get("prompt"));
-                printStream.print(prompt.string());
+                //final StringAtom prompt = (StringAtom) _globalScope.get(Identifier.get("prompt"));
+                printStream.print("> "); // todo use prompt var as above
                 final Atom parsedAtom = parseAtom(reader);
                 if (parsedAtom instanceof Identifier && ((Identifier)parsedAtom).string().equals("quit")) {
                     break;
                 }
                 try {
-                    final Atom resultAtom = parsedAtom.eval(_globalEnvironment);
+                    final Atom resultAtom = parsedAtom.eval(_globalScope);
                     resultAtom.print(printStream);
                     printStream.print('\n');
                 }
@@ -148,7 +152,7 @@ public final class Scheme {
      *
      */
     public static interface Atom {
-        public Atom eval(final Environment environment);
+        public Atom eval(final Scope scope);
         public void print(final PrintStream printStream);
     }
 
@@ -209,7 +213,7 @@ public final class Scheme {
             return cdr().cdr().car();
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             // Note: The only time a ConsCell should receive the eval() message is when its the head of a list.
             // Therefore, we always assume we're doing expression evaluation.
             final Atom atomResult;
@@ -218,9 +222,9 @@ public final class Scheme {
             }
             else {
                 final Atom functionReference = car();
-                final BuiltinFunction function = (BuiltinFunction)functionReference.eval(environment);
+                final BuiltinFunction function = (BuiltinFunction)functionReference.eval(scope);
                 final ConsCell args = cdr();
-                atomResult = function.apply(args, environment);
+                atomResult = function.apply(args, scope);
             }
             return atomResult;
         }
@@ -242,22 +246,115 @@ public final class Scheme {
 
 
     /********************************************************************
-     * todo this old version is based on Unique identifiers
-     * Identifier knows how to look itself up in an Environment
+     *
+     * Scope maps identifiers to their storage stacks.  Storahe stacks
+     * can be cached on each identifer within a given body of a lambda.
+     *
+     */
+    private static final class Scope {
+        private final Scope _parentScope;
+        private ConsCell _formalParams;
+
+        private Scope(final Scope parentScope, final ConsCell formalParams) {
+            _parentScope = parentScope;
+            _formalParams = formalParams;
+            initStacks(formalParams);
+        }
+
+        private static void initStacks(final ConsCell formalParams) {
+            if (formalParams != ConsCell.EmptyList) {
+                final Identifier identifier = (Identifier)formalParams.car();
+                identifier._valueStack = new Stack<Atom>();
+                final ConsCell remainder = formalParams.cdr();
+                initStacks(remainder);
+            }
+        }
+
+        private static Identifier _scanThisScopeForIdentifier(final String uniqueString, final ConsCell paramsList) {
+            // todo should make this use recursion. OR USE A HASHTABLE WHERE LARGE
+            ConsCell nextParam = paramsList;
+            while (nextParam != ConsCell.EmptyList) {
+                final Identifier identifier = (Identifier)nextParam.car();
+                if (identifier._string == uniqueString) {
+                    return identifier;
+                }
+                nextParam = nextParam.cdr();
+            }
+            return null;
+        }
+
+        // todo need better naming.
+        private Identifier scanScopeChainForIdentifier(final String uniqueString) {
+            Identifier param = _scanThisScopeForIdentifier(uniqueString, _formalParams);
+            if (param == null) {
+                if (_parentScope == null) {
+                    throw new RuntimeException("Unbound identifier: " + uniqueString);
+                }
+                param = _parentScope.scanScopeChainForIdentifier(uniqueString);
+            }
+            return param;
+        }
+
+        private void define(final Identifier identifier, final Atom value) {
+            System.out.println("DEFINE: " + identifier + " value: " + value);
+            final Identifier existingIdentifer = _scanThisScopeForIdentifier(identifier.string(), _formalParams);
+            if (existingIdentifer == null) {
+                // todo should not create stacks in two differnt places -- unify with the initStaks above
+                identifier._valueStack = new Stack<Atom>();
+                _formalParams = new ConsCell(identifier, _formalParams);
+                identifier.setValue(value);
+            }
+            else {
+                existingIdentifer.setValue(value);
+            }
+        }
+
+        private void set(final Identifier identifier, final Atom value) {
+            System.out.println("SET: " + identifier + " value: " + value);
+            final Identifier existingIdentifer = scanScopeChainForIdentifier(identifier.string());
+            // Note that existingIdentifer cannot be null -- a RuntimeException will be thrown.
+            existingIdentifer.setValue(value);
+        }
+    }
+
+
+    /********************************************************************
+     * Identifier
+     *
+     * In this version, an Identifier has the usual name string (which is guaranteed unique so can be compared with ==)
+     * but it also has a stack of values.  When apply is called, rather than applying the values to a map inside the
+     * Scope, we simply push the values onto the stacks of the Identifiers.  Now, how do the other identifiers
+     * out there get a hold of these stacks?  Well, the first time they need to access the stack, if stack is null
+     * it needs to be resolved.  I'd rather not be putting the values into the environment, so what if we pass around
+     * the FunctionClosure itself?  So we'd eliminate the notion of Scope entirely and only have current Functions.
+     * Does this work for BuiltinFunctions?  Does it matter?  I don't think so.  A builtin function doesn't use any
+     * identifiers of its own (all code is Java).  All the args are evaluated in the normal way -- eval(FunctionClosure)
+     * This leaves just one problem -- the global environment.  We'll need a Scope object that holds the Identifiers
+     * for either the global environment OR a FunctionClosure (in essence the formalParams list for FunctionClosures).
+     * SO basically, rather than passing around environments, we need to pass around scopes.  A scope is a list of the
+     * identifiers that are introduced in this new lexical scope.  A FunctionClosure will hold its scope rather than an
+     * environment.  Scopes are created once and are static so do not generate garbage.  Just like the formal params.
+     * The scopes are used to locate the identifiers which hold the stacks, and the stacks are shared across all
+     * identifers within a given scope.
+     *
+     * When we enter a new scope, we apply the values to the identifiers by pushing the values into the identifier
+     * and then we pop the values off the identifiers as we leave the scope. The popping MUST be done in a
+     * finally block to ensure we keep the stacks at the proper level.
      *
      */
     private static final class Identifier implements Atom {
         private final String _string;
+        private Stack<Atom> _valueStack; // todo probably want a simpler/leaner implementation of this
         // statics
-        private static final Map<String, Identifier> IdentifierMap = new HashMap<String, Identifier>();
+        private static final Map<String, String> IdentifierNameMap = new HashMap<String, String>();
 
         private static Identifier get(final String string) {
-            Identifier identifier = IdentifierMap.get(string);
-            if (identifier == null) {
-                identifier = new Identifier(string);
-                IdentifierMap.put(string, identifier);
+            String uniqueString = IdentifierNameMap.get(string);
+            if (uniqueString == null) {
+                uniqueString = string;
+                IdentifierNameMap.put(string, uniqueString);
             }
-            return identifier;
+            return new Identifier(uniqueString);
         }
 
         /**
@@ -268,24 +365,52 @@ public final class Scheme {
             _string = string;
         }
 
-        public Atom eval(final Environment environment) {
-            return environment.get(this);
+        private void _checkValueStack(final Scope scope) {
+            if (_valueStack == null) {
+                System.out.println("*** looking up the value stack again for: " + _string);
+                // todo too bad this has to be lazily initialized
+                final Identifier param = scope.scanScopeChainForIdentifier(_string);
+                _valueStack = param._valueStack;
+            }
+        }
+
+        public Atom eval(final Scope scope) {
+            _checkValueStack(scope);
+            final Atom value = _valueStack.peek();
+            return value;
+        }
+
+//        public void push(final Atom value, final Scope scope) {
+//            _checkValueStack(scope);
+//            _valueStack.push(value);
+//            // todo remove this *********************************************************
+//            if (_valueStack.size() > 5) {
+//                System.out.println(" STACK HAS GROWN TO > 5: " + _valueStack.size() + " " + _string);
+//            }
+//        }
+
+        public void push(final Atom value) {
+            _valueStack.push(value);
+            // todo remove this *********************************************************
+            if (_valueStack.size() > 5) {
+                System.out.println(" STACK HAS GROWN TO > 5: " + _valueStack.size() + " " + _string);
+            }
+        }
+
+        public void pop() {
+            System.out.println("Identifier.pop(): " + _string + " : " + _valueStack.peek() );
+            _valueStack.pop();
+        }
+
+        public void setValue(final Atom value) {
+            if (!_valueStack.isEmpty()) {
+                _valueStack.pop();
+            }
+            _valueStack.push(value);
         }
 
         private String string() {
             return _string;
-        }
-
-        @Override
-        public int hashCode() {
-            return _string.hashCode();
-        }
-
-        @Override
-        @SuppressWarnings({"EqualsWhichDoesntCheckParameterClass"})
-        public boolean equals(final Object otherObject) {
-            // Identifiers are uniqued via IdentifierMap (see above) so can compare with ==.
-            return this == otherObject;
         }
 
         public void print(final PrintStream printStream) {
@@ -295,105 +420,6 @@ public final class Scheme {
         @Override
         public String toString() {
             return _string;
-        }
-    }
-
-
-
-    /********************************************************************
-     *
-     * Environment stores the symbol table for the current environment.
-     * This is one of the few things in the system which is not an Atom.
-     * todo is it kosher to make this an Atom?  Needed for "env" support.
-     * todo do we really want to force all values to be Atoms?  Cannot store System.out in env, among others.
-     * todo: Note that, as far as the interpreter itself is concerned, the creation and access of Environments
-     * todo: is responsible for most garbage generation and cpu cycles compared to a compiled system.  Making the
-     * todo: Environment leaner (ie not using Maps) if perhaps the one area to concentrate on for performance.
-     * todo: perhaps moving some of the functionality of SmallMap into the Environment itself would help.
-     * todo: Another speed improvement could be to cache the most recent lookup index on the Identifiers.
-     * todo: but that means we would need to stop uniqueing the Identifiers.
-     *
-     * todo:  consider this possible optimization...
-     *
-     * Rather than storing the values directly in the Map, we wrap the value in a AtomHolder (or whatever)
-     * and put that in the Map of the Env.  Then, each time we look up a value, can can pull the AtomHolder
-     * out of its base environment, and cache the Holder in each of the closer environments (or possibly just the)
-     * nearest one?)  So now we don't need to go so far to find the object, yet if we change its value, that change will
-     * still affect its home location.  Assuming this works and doesn't have trouble with the define-inside-lambda
-     * question, can we take it a step further and cache the AtomHolder on the Identifier themselves?  That is,
-     * apply creates the Holders in the local env, and the first time an Identifier is used to look one up, we cache the
-     * Holder on the Identifer -- Bzzzt!  Doesn't work because the functions would not be re-entrant.  However, we should
-     * be able to cache the index of the Holder as cached in the local scope and use that as a shortcut to looking up
-     * the Holder (cached in the local scope).  So we need to add an int _indexCache field to the Identifier and set
-     * that each time we use the identifier to look it up.  We first use that index and see if the Identifier we're
-     * looking for is there and, if so we use it, else we do the full scan.
-     *
-     */
-    private static interface Environment extends Atom {
-        public int size();
-        public void put(final Identifier identifier, final Atom atom);
-        public Atom get(final Identifier identifier);
-        public boolean contains(final Identifier identifier);
-        public Environment getParent();
-        public void putAll(final Map<Identifier, Atom> map);
-    }
-
-
-    /********************************************************************
-     *
-     * MapEnvironment implementation using a Map
-     */
-    private static final class MapEnvironment implements Environment {
-        private final Environment _parent;
-        final Map<Identifier, Atom> _map;
-        // todo Well, most Environments in my simple test cases only have one key/value pair so it seems a big
-        // todo waste to use a Map for that (even the SmallMap).
-
-        private MapEnvironment(final Environment parent, final int initialSize) {
-            _parent = parent;
-            _map = initialSize > 8 ? new HashMap<Identifier, Atom>(initialSize) : new SmallMap<Identifier, Atom>(initialSize);
-        }
-
-        public int size() {
-            return _map.size();
-        }
-
-        public void put(final Identifier identifier, final Atom atom) {
-            _map.put(identifier, atom);
-        }
-
-        public Atom get(final Identifier identifier) {
-            Atom atom = _map.get(identifier);
-            if (atom == null) {
-                // this recurses up the entire Environment chain
-                if (_parent != null) {
-                    atom = _parent.get(identifier);
-                }
-                else {
-                    throw new RuntimeException("Unable to locate identifier: " + identifier);
-                }
-            }
-            return atom;
-        }
-
-        public boolean contains(final Identifier identifier) {
-            return _map.containsKey(identifier);
-        }
-
-        public Environment getParent() {
-            return _parent;
-        }
-
-        public void putAll(final Map<Identifier, Atom> map) {
-            _map.putAll(map);
-        }
-
-        public Atom eval(final Environment environment) {
-            return this;
-        }
-
-        public void print(final PrintStream printStream) {
-            printStream.print(_map.toString());
         }
     }
 
@@ -423,7 +449,7 @@ public final class Scheme {
             return _boolean;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -498,7 +524,7 @@ public final class Scheme {
             _value = value;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -608,7 +634,7 @@ public final class Scheme {
             _value = value;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -693,7 +719,7 @@ public final class Scheme {
             return _string;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -727,48 +753,45 @@ public final class Scheme {
      *
      */
     private static interface BuiltinFunction extends Atom {
-        public Atom apply(final ConsCell args, final Environment environment);
+        public Atom apply(final ConsCell args, final Scope scope);
     }
 
     // statics
-    public static final Map<Identifier, Atom> BuiltinFunctionMap = new HashMap<Identifier, Atom>(32);
+    public static final Map<String, BuiltinFunction> BuiltinFunctionMap = new HashMap<String, BuiltinFunction>(32);
 
     static {
         initBuiltinFunctions(BuiltinFunctionMap);
     }
 
-    private static void initBuiltinFunctions(final Map<Identifier, Atom> builtinFunctionsMap) {
-        // Constants
-        builtinFunctionsMap.put(Identifier.get(BooleanAtom.TrueName), BooleanAtom.True);
-        builtinFunctionsMap.put(Identifier.get(BooleanAtom.FalseName), BooleanAtom.False);
-
+    private static void initBuiltinFunctions(final Map<String, BuiltinFunction> builtinFunctionsMap) {
         // Builtin Functions
-        builtinFunctionsMap.put(Identifier.get(BinaryPlus.Name), new BinaryPlus());
-        builtinFunctionsMap.put(Identifier.get(BinaryMinus.Name), new BinaryMinus());
-        builtinFunctionsMap.put(Identifier.get(BinaryMultiply.Name), new BinaryMultiply());
-        builtinFunctionsMap.put(Identifier.get(BinaryDivide.Name), new BinaryDivide());
+        builtinFunctionsMap.put(BinaryPlus.Name, new BinaryPlus());
+        builtinFunctionsMap.put(BinaryMinus.Name, new BinaryMinus());
+        builtinFunctionsMap.put(BinaryMultiply.Name, new BinaryMultiply());
+        builtinFunctionsMap.put(BinaryDivide.Name, new BinaryDivide());
 
-        builtinFunctionsMap.put(Identifier.get(ReadFunction.Name), new ReadFunction());
-        builtinFunctionsMap.put(Identifier.get(QuoteFunction.Name), new QuoteFunction());
-        builtinFunctionsMap.put(Identifier.get(BeginFunction.Name), new BeginFunction());
-        builtinFunctionsMap.put(Identifier.get(LambdaFunction.Name), new LambdaFunction());
-        builtinFunctionsMap.put(Identifier.get(DefineFunction.Name), new DefineFunction());
-        builtinFunctionsMap.put(Identifier.get(SetBangFunction.Name), new SetBangFunction());
-        builtinFunctionsMap.put(Identifier.get(SimpleLetFunction.Name), new SimpleLetFunction());
+        builtinFunctionsMap.put(ReadFunction.Name, new ReadFunction());
+        builtinFunctionsMap.put(QuoteFunction.Name, new QuoteFunction());
+        builtinFunctionsMap.put(BeginFunction.Name, new BeginFunction());
+        builtinFunctionsMap.put(LambdaFunction.Name, new LambdaFunction());
+        builtinFunctionsMap.put(DefineFunction.Name, new DefineFunction());
+        builtinFunctionsMap.put(SetBangFunction.Name, new SetBangFunction());
+        builtinFunctionsMap.put(LambdaBasedLetFunction.Name, new LambdaBasedLetFunction());
+//        builtinFunctionsMap.put(SimpleLetFunction.Name, new SimpleLetFunction());  todo add Let support
 
-        builtinFunctionsMap.put(Identifier.get(ConsFunction.Name), new ConsFunction());
-        builtinFunctionsMap.put(Identifier.get(CarFunction.Name), new CarFunction());
-        builtinFunctionsMap.put(Identifier.get(CdrFunction.Name), new CdrFunction());
-        builtinFunctionsMap.put(Identifier.get(IfFunction.Name), new IfFunction());
-        builtinFunctionsMap.put(Identifier.get(WhileFunction.Name), new WhileFunction());
-        builtinFunctionsMap.put(Identifier.get(EvalFunction.Name), new EvalFunction());
-        builtinFunctionsMap.put(Identifier.get(ApplyFunction.Name), new ApplyFunction());
+        builtinFunctionsMap.put(ConsFunction.Name, new ConsFunction());
+        builtinFunctionsMap.put(CarFunction.Name, new CarFunction());
+        builtinFunctionsMap.put(CdrFunction.Name, new CdrFunction());
+        builtinFunctionsMap.put(IfFunction.Name, new IfFunction());
+        builtinFunctionsMap.put(WhileFunction.Name, new WhileFunction());
+        builtinFunctionsMap.put(EvalFunction.Name, new EvalFunction());
+        builtinFunctionsMap.put(ApplyFunction.Name, new ApplyFunction());
 
         // predicates
-        builtinFunctionsMap.put(Identifier.get(BinaryLessThanFunction.Name), new BinaryLessThanFunction());
-        builtinFunctionsMap.put(Identifier.get(EqualsFunction.Name), new EqualsFunction());
-        builtinFunctionsMap.put(Identifier.get(ListNullFunction.Name), new ListNullFunction());
-        builtinFunctionsMap.put(Identifier.get(ListLengthFunction.Name), new ListLengthFunction());
+        builtinFunctionsMap.put(BinaryLessThanFunction.Name, new BinaryLessThanFunction());
+        builtinFunctionsMap.put(EqualsFunction.Name, new EqualsFunction());
+        builtinFunctionsMap.put(ListNullFunction.Name, new ListNullFunction());
+        builtinFunctionsMap.put(ListLengthFunction.Name, new ListLengthFunction());
     }
 
 
@@ -780,18 +803,18 @@ public final class Scheme {
     private static final class ReadFunction implements BuiltinFunction {
         private static final String Name = "read";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             throw new RuntimeException("Unsupported");
         }
 
         /**
          * todo THIS IS A HACK TO ALLOW FOR Reader to be passed.
          * @param args args
-         * @param environment env
+         * @param scope env
          * @param reader reader
          * @return parsed Atom
          */
-        public Atom apply(final ConsCell args, final Environment environment, final Reader reader) {
+        public Atom apply(final ConsCell args, final Scope scope, final Reader reader) {
             // This uses Phil Milne's SchemeTokenizer which is akin to Lexx.
             final SchemeTokenizer tokenizer = new SchemeTokenizer(reader);
             try {
@@ -802,7 +825,7 @@ public final class Scheme {
             }
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -901,16 +924,16 @@ public final class Scheme {
         private static final String Name = "quote";
 
         private static ConsCell quotedConsCell(final ConsCell nextConsCell) {
-            final QuoteFunction quoteFunction = (QuoteFunction) BuiltinFunctionMap.get(Identifier.get(QuoteFunction.Name));
+            final QuoteFunction quoteFunction = (QuoteFunction)BuiltinFunctionMap.get(Identifier.get(QuoteFunction.Name).string());
             final ConsCell consCell = new ConsCell(quoteFunction, nextConsCell);
             return consCell;
         }
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             return args.car();
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -936,16 +959,16 @@ public final class Scheme {
          * and the result of the final evaluation is returned.  This is a recursive method which processes each
          * expression of the _body, and peels off the remainder to be evaluated after the current expression.
          * @param expressionList the remaining Atoms from teh _body to be evaluated.
-         * @param executionEnvironment the environment in which to evaluate each expression
+         * @param executionScope the environment in which to evaluate each expression
          * @return the value of the last expression evaluated.
          */
-        private static Atom _evalExpressions(final ConsCell expressionList, final Environment executionEnvironment) {
+        private static Atom _evalExpressions(final ConsCell expressionList, final Scope executionScope) {
             final Atom resultAtom;
             if (expressionList != ConsCell.EmptyList) {
                 final Atom expression = expressionList.car();
-                final Atom currentResult = expression.eval(executionEnvironment);
+                final Atom currentResult = expression.eval(executionScope);
                 final ConsCell remainingExpressions = expressionList.cdr();
-                final Atom nextResult = _evalExpressions(remainingExpressions, executionEnvironment);
+                final Atom nextResult = _evalExpressions(remainingExpressions, executionScope);
                 resultAtom = nextResult == null ? currentResult : nextResult;
             }
             else {
@@ -954,11 +977,11 @@ public final class Scheme {
             return resultAtom;
         }
 
-        public Atom apply(final ConsCell args, final Environment environment) {
-            return _evalExpressions(args, environment);
+        public Atom apply(final ConsCell args, final Scope scope) {
+            return _evalExpressions(args, scope);
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -976,28 +999,30 @@ public final class Scheme {
      *
      */
     public static final class FunctionClosure implements BuiltinFunction {
-        private final Atom _formalParams;
+        private final Scope _scope;
         private final ConsCell _body;
-        private final Environment _lexicalEnvironment;
         private final boolean _isFormalParamList;
-        private int _environmentCapacity;
 
-        private FunctionClosure(final Atom formalParams, final ConsCell body, final Environment lexicalEnvironment) {
-            _formalParams = formalParams;
+        private FunctionClosure(final Atom formalParams, final ConsCell body, final Scope parentScope) {
             _body = body;
-            _lexicalEnvironment = lexicalEnvironment;
-            _isFormalParamList = _formalParams instanceof ConsCell;
-            _environmentCapacity = _isFormalParamList ? ((ConsCell)formalParams).length().intValue() : 1;
+            _isFormalParamList = formalParams instanceof ConsCell;
+            if (_isFormalParamList) {
+                _scope = new Scope(parentScope, (ConsCell)formalParams);
+            }
+            else {
+                final ConsCell wrappedParams = new ConsCell(formalParams, ConsCell.EmptyList);
+                _scope = new Scope(parentScope, wrappedParams);
+            }
         }
 
-        private static ConsCell _evalArgs(final ConsCell args, final Environment invocationEnvironment) {
-            // For each arg, we eval in the invocationEnvironment and build a new list from the values.
+        private static ConsCell _evalArgs(final ConsCell args, final Scope invocationScope) {
+            // For each arg, we eval in the invocationScope and build a new list from the values.
             final ConsCell resultList;
             if (args != ConsCell.EmptyList) {
                 final Atom arg = args.car();
-                final Atom value = arg.eval(invocationEnvironment);
+                final Atom value = arg.eval(invocationScope);
                 final ConsCell argsRemainder = args.cdr();
-                final ConsCell remainderValuesList = _evalArgs(argsRemainder, invocationEnvironment);
+                final ConsCell remainderValuesList = _evalArgs(argsRemainder, invocationScope);
                 resultList = new ConsCell(value, remainderValuesList);
             }
             else {
@@ -1005,88 +1030,93 @@ public final class Scheme {
             }
             return resultList;
         }
-
-        /**
-         * This applies all the args for formalParam as a single list.  Unlike _applyArgs(...), this only walks
-         * the args, computes values for each arg, constructs a new list of values, and puts that list into the
-         * executionEnvironment bound to formalParam. 
-         *
-         * @param formalParam formalParam
-         * @param args args
-         * @param invocationEnvironment invocationEnvironment
-         * @param executionEnvironment executionEnvironment
-         */
-        private static void _applyVarArgs(final Identifier formalParam, final ConsCell args,
-                                          final Environment invocationEnvironment, final Environment executionEnvironment) {
-            final ConsCell argsList = _evalArgs(args,  invocationEnvironment);
-            executionEnvironment.put(formalParam, argsList);
-        }
         
-        private static final Identifier DotIdentifier = Identifier.get(".");
+        private static final String DotIdentifier = Identifier.get(".").string();
         
         /**
          * This applies the args for formalParams which is defined as a list.  Both the formalParms list and
          * the args list are walked in parallel
          * @param formalParams formalParams
          * @param args args
-         * @param invocationEnvironment invocationEnvironment
-         * @param executionEnvironment executionEnvironment
+         * @param invocationScope invocationScope
          */
         private static void _applyArgs(final ConsCell formalParams, final ConsCell args,
-                                       final Environment invocationEnvironment, final Environment executionEnvironment) {
-            // Recursively walk formalParams and args in parallel.  For each arg, we eval in the invocationEnvironment
-            // and then bind the values of the args in the executionEnvironment using the formalParam as identifiers.
+                                       final Scope invocationScope) {
+            // Recursively walk formalParams and args in parallel.  For each arg, we eval in the invocationScope
+            // and then bind the values of the args in the executionScope using the formalParam as identifiers.
             if (formalParams != ConsCell.EmptyList) {
                 final Identifier formalParam = (Identifier)formalParams.car();
-                if (formalParam == DotIdentifier) {
+                if (formalParam.string() == DotIdentifier) {
                     // This handles case:  (lambda (a b . c) p q r s t)
                     // and assign the values as: a=p b=q c=(r s t)
                     final Identifier actualParam = (Identifier)formalParams.cadr();
-                    _applyVarArgs(actualParam, args, invocationEnvironment, executionEnvironment);
+                    final ConsCell argsList = _evalArgs(args, invocationScope);
+                    actualParam.push(argsList);
                 }
                 else {
                     final Atom arg = args.car();
-                    final Atom value = arg.eval(invocationEnvironment);
-                    executionEnvironment.put(formalParam, value);
+                    final Atom value = arg.eval(invocationScope);
+                    formalParam.push(value);
                     final ConsCell formalParamsRemainder = formalParams.cdr();
                     final ConsCell argsRemainder = args.cdr();
-                    _applyArgs(formalParamsRemainder, argsRemainder, invocationEnvironment, executionEnvironment);
+                    _applyArgs(formalParamsRemainder, argsRemainder, invocationScope);
                 }
             }
         }
 
         /**
+         * This is done at the conclusion of the apply method and balances the stacks for each formalArg.
+         * @param argsList argsList
+         */
+        private static void _popArgs(final ConsCell argsList) {
+            if (argsList != ConsCell.EmptyList) {
+                final Identifier identifier = (Identifier)argsList.car();
+                if (identifier.string() != DotIdentifier) {
+                    identifier.pop();
+                }
+                final ConsCell remainder = argsList.cdr();
+                _popArgs(remainder);
+            }
+        }
+
+        /**
          *
-         * @param args a list of unevaluated Atoms which will be evaluated in the invocationEnvironment and
-         * bound to their respective formalParams in the invocationEnvironment.
-         * @param invocationEnvironment The environment which is currently active when the function is invoked.  The
+         * @param args a list of unevaluated Atoms which will be evaluated in the invocationScope and
+         * bound to their respective formalParams in the invocationScope.
+         * @param invocationScope The environment which is currently active when the function is invoked.  The
          * args will be evaluated in this environment and bound to their formalParams within the executionEnvironment
          * (ie the environment where the body of the function will be evaluated).
          * @return currently, the body is assumed to be a single expression, so the return value is the value of that
          * expression when evaluated in the executionEnvironment.
          */
-        public Atom apply(final ConsCell args, final Environment invocationEnvironment) {
-            // Note: This is the ONLY place where new Environments are created (other than GlobalEnvironment).
-            // Note that "let" is implemented using a FunctionClosure, so indirectly let also creates a new env.
-            final Environment executionEnvironment = new MapEnvironment(_lexicalEnvironment, _environmentCapacity);
+        public Atom apply(final ConsCell args, final Scope invocationScope) {
+            // todo note that we push args outside the try/finally.  Some args may get pushed and not popped if
+            // todo an exception happens.  Need to figure out how to handle keeping the stacks balanced in the
+            // todo event that an exception happens when evaluating the args
+            // todo the API to _applyArgs is a bit weird -- need to clean up
             if (_isFormalParamList) {
-                _applyArgs((ConsCell)_formalParams, args,  invocationEnvironment, executionEnvironment);
+                _applyArgs(_scope._formalParams, args, invocationScope);
             }
             else {
                 // This handles the case: ((lambda a a) b c d e)
                 // and assigns values as: a=(b c d e)
-                // _formalParams must be an Identifier and not a ConsCell or constant.
-                final Identifier formalParam = (Identifier)_formalParams;
-                _applyVarArgs(formalParam, args, invocationEnvironment, executionEnvironment);
+                final Identifier formalParam = (Identifier)_scope._formalParams.car();
+                final ConsCell argsList = _evalArgs(args, invocationScope);
+                formalParam.push(argsList);
             }
+
             // The body of a FunctionClosure has an implicit (begin body) wrapped around it
-            final Atom resultAtom = BeginFunction._evalExpressions(_body, executionEnvironment);
-            // keep track of the environment size so, if it grows, we avoid its growing again.
-            _environmentCapacity = executionEnvironment.size();
+            final Atom resultAtom;
+            try {
+                resultAtom = BeginFunction._evalExpressions(_body, _scope);
+            }
+            finally {
+                _popArgs(_scope._formalParams);
+            }
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1094,7 +1124,14 @@ public final class Scheme {
             printStream.print('(');
             printStream.print(LambdaFunction.Name);
             printStream.print(' ');
-            _formalParams.print(printStream);
+            final ConsCell params = _scope._formalParams;
+            if (_isFormalParamList) {
+                params.print(printStream);
+            }
+            else {
+                final Identifier identifier = (Identifier)params.car();
+                identifier.print(printStream);
+            }
             printStream.print(' ');
             // todo: this isn't going to print correctly as _body isn't required to be wrapped in a list
             // todo: need to add recursive print or list print that skips the parentheses
@@ -1112,14 +1149,14 @@ public final class Scheme {
     private static final class LambdaFunction implements BuiltinFunction {
         private static final String Name = "lambda";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom formalParameters = args.car();
             final ConsCell body = args.cdr();
-            final FunctionClosure functionClosure = new FunctionClosure(formalParameters, body, environment);
+            final FunctionClosure functionClosure = new FunctionClosure(formalParameters, body, scope);
             return functionClosure;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1128,6 +1165,78 @@ public final class Scheme {
         }
     }
 
+    /********************************************************************
+     *
+     * LambdaBasedLetFunction is the builtin function that puts a series of key/value pair into a new environment
+     * and then evaluates the body.
+     * (let ((a x)) (b y) (c z)) atom)
+     * or
+     * (let bindings-list body)
+     * todo this is quick and dirty hack -- real implementation should be done in scheme code
+     * todo using lambda and probably requires a modification to FunctionClosure so that it
+     * todo can be used as a "macro" facility which does not evaluate its args before the function
+     * todo evaluates.
+     *
+     * todo: rather than implement this in scheme (since its such a basic part of the system)
+     * todo: I should modify LambdaFunction to allow for passing in a completed executionEnv
+     * todo: Or is it the case that FunctionClosure should be implemented in terms of a let construct?
+     *
+     */
+    private static final class LambdaBasedLetFunction implements BuiltinFunction {
+        private static final String Name = "let";
+
+        // todo, this code is a mess -- we should simply build the Env directly without repackaging the formals and args.
+        private static ConsCell _extractCars(final ConsCell bindingsList) {
+            final ConsCell consCell;
+            if (bindingsList == ConsCell.EmptyList) {
+                consCell = ConsCell.EmptyList;
+            }
+            else {
+                final ConsCell binding = (ConsCell)bindingsList.car();
+                final Atom id = binding.car();
+                final ConsCell remainingBindings = bindingsList.cdr();
+                final ConsCell nextConsCell = _extractCars(remainingBindings);
+                consCell = new ConsCell(id, nextConsCell);
+            }
+            return consCell;
+        }
+
+        // todo, this code is a mess -- we should simply build the Env directly without repackaging the formals and args.
+        private static ConsCell _extractCadrs(final ConsCell bindingsList) {
+            final ConsCell consCell;
+            if (bindingsList == ConsCell.EmptyList) {
+                consCell = ConsCell.EmptyList;
+            }
+            else {
+                final ConsCell binding = (ConsCell)bindingsList.car();
+                final Atom arg = binding.cadr();
+                final ConsCell remainingBindings = bindingsList.cdr();
+                final ConsCell nextConsCell = _extractCadrs(remainingBindings);
+                consCell = new ConsCell(arg, nextConsCell);
+            }
+            return consCell;
+        }
+
+        public Atom apply(final ConsCell args, final Scope scope) {
+            // Note: bindingsList is of the form '((id1 arg1) (id2 arg2) (...))
+            final ConsCell bindingsList = (ConsCell)args.car();
+            final ConsCell body = args.cdr();
+
+            final ConsCell formalParams = _extractCars(bindingsList);
+            final ConsCell functionArgs = _extractCadrs(bindingsList);
+
+            final FunctionClosure functionClosure = new FunctionClosure(formalParams, body, scope);
+            return functionClosure.apply(functionArgs, scope);
+        }
+
+        public Atom eval(final Scope scope) {
+            return this;
+        }
+
+        public void print(final PrintStream printStream) {
+            printStream.print(Name);
+        }
+    }
 
     /********************************************************************
      *
@@ -1142,53 +1251,53 @@ public final class Scheme {
      * of the program -- the let evaluates to the value of an expression, not a Function that can be evaluated
      * in other contexts.
      *
-     * So, I have decided to create SimpleLetFunction that merely creates an Environment who parent is the
+     * So, I have decided to create SimpleLetFunction that merely creates an Scope who parent is the
      * current environment and evaluate the body of the let in that new environment.  We'll then run the test
      * cases I have and see if anything goes haywire.  I do not think it would be possible to construct a test
      * that makes this fail, but I will keep my eyes open for examples.
      *
      */
-    private static final class SimpleLetFunction implements BuiltinFunction {
-        private static final String Name = "let";
-
-        /**
-         * Recursively walk the bindings list ((a b) (c d) (e f)) binding the value of b to a, the value of d to c etc
-         * and placing these into the executionEnvironment.  The body of the let will evaluate in this newly created
-         * environment.  The argument expressions [ie b d and f above] are evaluated in the invocationEnvironment.
-         * @param bindingsList bindingsList
-         * @param invocationEnvironment the environment in which the let evaluates (arg values will be evaluated in this environment)
-         * @param executionEnvironment the environment in which the body of the let will be evaluated (arg values placed into this environment)
-         */
-        private static void _bindArgs(final ConsCell bindingsList, final Environment invocationEnvironment, final Environment executionEnvironment) {
-            if (bindingsList != ConsCell.EmptyList) {
-                final ConsCell binding = (ConsCell)bindingsList.car();
-                final Identifier identifier = (Identifier)binding.car();
-                final Atom expression = binding.cadr();
-                final Atom value = expression.eval(invocationEnvironment);
-                executionEnvironment.put(identifier, value);
-                final ConsCell remainingBindings = bindingsList.cdr();
-                _bindArgs(remainingBindings, invocationEnvironment, executionEnvironment);
-            }
-        }
-
-        public Atom apply(final ConsCell args, final Environment invocationEnvironment) {
-            // Note: bindingsList is of the form '((id1 arg1) (id2 arg2) (...))
-            final ConsCell bindingsList = (ConsCell)args.car();
-            final Environment executionEnvironment = new MapEnvironment(invocationEnvironment, bindingsList.length().intValue());
-            _bindArgs(bindingsList, invocationEnvironment, executionEnvironment);
-            final ConsCell body = args.cdr();
-            final Atom resultAtom = BeginFunction._evalExpressions(body, executionEnvironment);
-            return resultAtom;
-        }
-
-        public Atom eval(final Environment environment) {
-            return this;
-        }
-
-        public void print(final PrintStream printStream) {
-            printStream.print(Name);
-        }
-    }
+//    private static final class SimpleLetFunction implements BuiltinFunction {
+//        private static final String Name = "let";
+//
+//        /**
+//         * Recursively walk the bindings list ((a b) (c d) (e f)) binding the value of b to a, the value of d to c etc
+//         * and placing these into the executionScope.  The body of the let will evaluate in this newly created
+//         * environment.  The argument expressions [ie b d and f above] are evaluated in the invocationScope.
+//         * @param bindingsList bindingsList
+//         * @param invocationScope the environment in which the let evaluates (arg values will be evaluated in this environment)
+//         * @param executionScope the environment in which the body of the let will be evaluated (arg values placed into this environment)
+//         */
+//        private static void _bindArgs(final ConsCell bindingsList, final Scope invocationScope, final Scope executionScope) {
+//            if (bindingsList != ConsCell.EmptyList) {
+//                final ConsCell binding = (ConsCell)bindingsList.car();
+//                final Identifier identifier = (Identifier)binding.car();
+//                final Atom expression = binding.cadr();
+//                final Atom value = expression.eval(invocationScope);
+//                executionScope.put(identifier, value);
+//                final ConsCell remainingBindings = bindingsList.cdr();
+//                _bindArgs(remainingBindings, invocationScope, executionScope);
+//            }
+//        }
+//
+//        public Atom apply(final ConsCell args, final Scope invocationScope) {
+//            // Note: bindingsList is of the form '((id1 arg1) (id2 arg2) (...))
+//            final ConsCell bindingsList = (ConsCell)args.car();
+//            final Scope executionScope = new Scope(invocationScope, bindingsList.length().intValue());
+//            _bindArgs(bindingsList, invocationScope, executionScope);
+//            final ConsCell body = args.cdr();
+//            final Atom resultAtom = BeginFunction._evalExpressions(body, executionScope);
+//            return resultAtom;
+//        }
+//
+//        public Atom eval(final Scope scope) {
+//            return this;
+//        }
+//
+//        public void print(final PrintStream printStream) {
+//            printStream.print(Name);
+//        }
+//    }
     
     /********************************************************************
      *
@@ -1198,15 +1307,15 @@ public final class Scheme {
     private static final class DefineFunction implements BuiltinFunction {
         private static final String Name = "define";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Identifier identifier = (Identifier)args.car();
             final Atom valueExpression = args.cadr();
-            final Atom value = valueExpression.eval(environment);
-            environment.put(identifier, value);
+            final Atom value = valueExpression.eval(scope);
+            scope.define(identifier, value);
             return value;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1225,36 +1334,15 @@ public final class Scheme {
     private static final class SetBangFunction implements BuiltinFunction {
         private static final String Name = "set!";
 
-        /**
-         * Used to recursively locate and set an existing value in the first enclosing environment which already has the identifier.
-         * @param environment environment
-         * @param identifier id
-         * @param value val
-         */
-        private static void _locateAndSet(final Environment environment, final Identifier identifier, final Atom value) {
-            if (environment.contains(identifier)) {
-                environment.put(identifier, value);
-            }
-            else {
-                final Environment parent = environment.getParent();
-                if (parent != null) {
-                    _locateAndSet(parent, identifier, value);
-                }
-                else {
-                    throw new RuntimeException("Unable to locate identifier for setBang: " + identifier);
-                }
-            }
-        }
-
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Identifier identifier = (Identifier)args.car();
             final Atom valueExpression = args.cadr();
-            final Atom value = valueExpression.eval(environment);
-            _locateAndSet(environment, identifier, value);
+            final Atom value = valueExpression.eval(scope);
+            scope.set(identifier, value);
             return value;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1275,16 +1363,16 @@ public final class Scheme {
     private static final class ConsFunction implements BuiltinFunction {
         private static final String Name = "cons";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom firstArg = args.car();
-            final Atom firstValue = firstArg.eval(environment);
+            final Atom firstValue = firstArg.eval(scope);
             final Atom secondArg = args.cadr();
-            final ConsCell secondValue = (ConsCell)secondArg.eval(environment);
+            final ConsCell secondValue = (ConsCell)secondArg.eval(scope);
             final ConsCell newConsCell = new ConsCell(firstValue, secondValue);
             return newConsCell;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1302,13 +1390,13 @@ public final class Scheme {
     private static final class CarFunction implements BuiltinFunction {
         private static final String Name = "car";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom firstArg = args.car();
-            final ConsCell list = (ConsCell)firstArg.eval(environment);
+            final ConsCell list = (ConsCell)firstArg.eval(scope);
             return list.car();
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1326,13 +1414,13 @@ public final class Scheme {
     private static final class CdrFunction implements BuiltinFunction {
         private static final String Name = "cdr";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom firstArg = args.car();
-            final ConsCell list = (ConsCell)firstArg.eval(environment);
+            final ConsCell list = (ConsCell)firstArg.eval(scope);
             return list.cdr();
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1352,14 +1440,14 @@ public final class Scheme {
     private static final class EvalFunction implements BuiltinFunction {
         private static final String Name = "eval";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom expressionReference = args.car();
-            final Atom expression = expressionReference.eval(environment);
-            final Atom resultAtom = expression.eval(environment);
+            final Atom expression = expressionReference.eval(scope);
+            final Atom resultAtom = expression.eval(scope);
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1379,16 +1467,16 @@ public final class Scheme {
     private static final class ApplyFunction implements BuiltinFunction {
         private static final String Name = "apply";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom functionReference = args.car();
-            final BuiltinFunction function = (BuiltinFunction)functionReference.eval(environment);
+            final BuiltinFunction function = (BuiltinFunction)functionReference.eval(scope);
             final Atom argsReference = args.cadr();
-            final ConsCell argsList = (ConsCell)argsReference.eval(environment);
-            final Atom resultAtom = function.apply(argsList, environment);
+            final ConsCell argsList = (ConsCell)argsReference.eval(scope);
+            final Atom resultAtom = function.apply(argsList, scope);
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1406,16 +1494,16 @@ public final class Scheme {
     private static final class BinaryPlus implements BuiltinFunction {
         private static final String Name = "b+";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom firstArg = args.car();
-            final NumberAtom number1 = (NumberAtom)firstArg.eval(environment);
+            final NumberAtom number1 = (NumberAtom)firstArg.eval(scope);
             final Atom secondArg = args.cadr();
-            final NumberAtom number2 = (NumberAtom)secondArg.eval(environment);
+            final NumberAtom number2 = (NumberAtom)secondArg.eval(scope);
             final NumberAtom result = number1.add(number2);
             return result;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1433,14 +1521,14 @@ public final class Scheme {
     private static final class BinaryMinus implements BuiltinFunction {
         private static final String Name = "b-";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
-            final NumberAtom number1 = (NumberAtom)args.car().eval(environment);
-            final NumberAtom number2 = (NumberAtom)args.cadr().eval(environment);
+        public Atom apply(final ConsCell args, final Scope scope) {
+            final NumberAtom number1 = (NumberAtom)args.car().eval(scope);
+            final NumberAtom number2 = (NumberAtom)args.cadr().eval(scope);
             final NumberAtom result = number1.subtract(number2);
             return result;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1458,14 +1546,14 @@ public final class Scheme {
     private static final class BinaryMultiply implements BuiltinFunction {
         private static final String Name = "b*";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
-            final NumberAtom number1 = (NumberAtom)args.car().eval(environment);
-            final NumberAtom number2 = (NumberAtom)args.cadr().eval(environment);
+        public Atom apply(final ConsCell args, final Scope scope) {
+            final NumberAtom number1 = (NumberAtom)args.car().eval(scope);
+            final NumberAtom number2 = (NumberAtom)args.cadr().eval(scope);
             final NumberAtom result = number1.multiply(number2);
             return result;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1483,14 +1571,14 @@ public final class Scheme {
     private static final class BinaryDivide implements BuiltinFunction {
         private static final String Name = "b/";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
-            final NumberAtom number1 = (NumberAtom)args.car().eval(environment);
-            final NumberAtom number2 = (NumberAtom)args.cadr().eval(environment);
+        public Atom apply(final ConsCell args, final Scope scope) {
+            final NumberAtom number1 = (NumberAtom)args.car().eval(scope);
+            final NumberAtom number2 = (NumberAtom)args.cadr().eval(scope);
             final NumberAtom result = number1.divide(number2);
             return result;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1509,17 +1597,17 @@ public final class Scheme {
     private static final class BinaryLessThanFunction implements BuiltinFunction {
         private static final String Name = "b<";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom leftSide = args.car();
-            final NumberAtom leftSideValue = (NumberAtom)leftSide.eval(environment);
+            final NumberAtom leftSideValue = (NumberAtom)leftSide.eval(scope);
             final Atom rightSide = args.cadr();
-            final NumberAtom rightSideValue = (NumberAtom)rightSide.eval(environment);
+            final NumberAtom rightSideValue = (NumberAtom)rightSide.eval(scope);
             final boolean isLessThan = leftSideValue.isLessThan(rightSideValue);
             final Atom resultAtom = BooleanAtom.getValue(isLessThan);
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1538,15 +1626,15 @@ public final class Scheme {
     private static final class ListNullFunction implements BuiltinFunction {
         private static final String Name = "null?";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom arg = args.car();
-            final ConsCell argValue = (ConsCell)arg.eval(environment);
+            final ConsCell argValue = (ConsCell)arg.eval(scope);
             final boolean isNullList = argValue == ConsCell.EmptyList;
             final Atom resultAtom = BooleanAtom.getValue(isNullList);
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1565,14 +1653,14 @@ public final class Scheme {
     private static final class ListLengthFunction implements BuiltinFunction {
         private static final String Name = "length";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom arg = args.car();
-            final ConsCell argValue = (ConsCell)arg.eval(environment);
+            final ConsCell argValue = (ConsCell)arg.eval(scope);
             final IntegerAtom integerAtom = argValue.length();
             return integerAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1591,12 +1679,12 @@ public final class Scheme {
     private static final class EqualsFunction implements BuiltinFunction {
         private static final String Name = "eq?";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom arg1 = args.car();
-            final Atom argValue1 = arg1.eval(environment);
+            final Atom argValue1 = arg1.eval(scope);
 
             final Atom arg2 = args.cadr();
-            final Atom argValue2 = arg2.eval(environment);
+            final Atom argValue2 = arg2.eval(scope);
 
 
             final boolean isEqual = argValue1.equals(argValue2);
@@ -1604,7 +1692,7 @@ public final class Scheme {
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1623,9 +1711,9 @@ public final class Scheme {
     private static final class IfFunction implements BuiltinFunction {
         private static final String Name = "if";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom predicateExpression = args.car();
-            final BooleanAtom booleanAtom = (BooleanAtom)predicateExpression.eval(environment);
+            final BooleanAtom booleanAtom = (BooleanAtom)predicateExpression.eval(scope);
             final Atom targetExpression;
             if (booleanAtom.isTrue()) {
                 targetExpression = args.cadr();
@@ -1637,11 +1725,11 @@ public final class Scheme {
                 // todo is this the correct thing to do in the case of one conditional expression that is not evaluated.
                 targetExpression = ConsCell.EmptyList;
             }
-            final Atom resultAtom = targetExpression.eval(environment);
+            final Atom resultAtom = targetExpression.eval(scope);
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1661,17 +1749,17 @@ public final class Scheme {
     private static final class WhileFunction implements BuiltinFunction {
         private static final String Name = "while";
 
-        public Atom apply(final ConsCell args, final Environment environment) {
+        public Atom apply(final ConsCell args, final Scope scope) {
             final Atom predicateExpression = args.car();
             final Atom trueBlock = args.cadr();
             Atom resultAtom = ConsCell.EmptyList;
-            while (((BooleanAtom)predicateExpression.eval(environment)).isTrue()) {
-                resultAtom = trueBlock.eval(environment);
+            while (((BooleanAtom)predicateExpression.eval(scope)).isTrue()) {
+                resultAtom = trueBlock.eval(scope);
             }
             return resultAtom;
         }
 
-        public Atom eval(final Environment environment) {
+        public Atom eval(final Scope scope) {
             return this;
         }
 
@@ -1679,160 +1767,4 @@ public final class Scheme {
             printStream.print(Name);
         }
     }
-
-    ///////////////////////
-    // Util
-    ///////////////////////
-
-    /**
-     * todo could use some junit tests for this
-     * todo this ould become the environment itself and eliminate one level of indirection.
-     * This is only a good idea for a very small number of key/value pairs.  Growth is slow (1 at a time), lookup
-     * is linear.  Keys must be uniqued before using (this only uses == for comparison).
-     * @param <K> key
-     * @param <V> value
-     */
-    private static final class SmallMap<K, V> implements Map<K, V> {
-        private Object[] _pairsArray;
-        private int _size;
-        // statics
-        private static final int SlotsPerEntry = 2;
-        private static final int NotFound = -1;
-
-        private SmallMap(final int initialCapacity) {
-            _pairsArray = new Object[initialCapacity * SlotsPerEntry];
-            _size = 0;
-        }
-
-        private int _indexOfKey(final Object targetKey) {
-            for (int index = 0, length = _size * SlotsPerEntry; index < length; index += SlotsPerEntry) {
-                final Object key = _pairsArray[index];
-                if (key == targetKey) {
-                    return index;
-                }
-            }
-            return NotFound;
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public V get(final Object key) {
-            final V value;
-            final int indexOfKey = _indexOfKey(key);
-            if (indexOfKey == NotFound) {
-                value = null;
-            }
-            else {
-                value = (V)_pairsArray[indexOfKey + 1];
-            }
-            return value;
-        }
-
-        private static Object[] _realloc(final Object[] array, final int newSize) {
-            final Object[] newArray;
-            final int oldSize = array.length;
-            if (newSize <= oldSize) {
-                newArray = array;
-            }
-            else {
-                newArray = new Object[newSize];
-                System.arraycopy(array, 0, newArray, 0, oldSize);
-            }
-            return newArray;
-        }
-
-        @Override
-        public V put(final Object key, final Object value) {
-            int indexOfKey = _indexOfKey(key);
-            if (indexOfKey == NotFound) {
-                indexOfKey = _size * SlotsPerEntry;
-                _size += 1;
-                _pairsArray = _realloc(_pairsArray, _size * SlotsPerEntry);
-            }
-            final int indexOfValue = indexOfKey + 1;
-            @SuppressWarnings("unchecked")
-            final V returnValue = (V)_pairsArray[indexOfValue];
-            _pairsArray[indexOfKey] = key;
-            _pairsArray[indexOfValue] = value;
-            return returnValue;
-        }
-
-        @Override
-        public int size() {
-            return _size;
-        }
-
-        @Override
-        public boolean isEmpty() {
-            return _size == 0;
-        }
-
-        @Override
-        public boolean containsKey(final Object key) {
-            return _indexOfKey(key) != NotFound;
-        }
-
-        @Override
-        public boolean containsValue(final Object targetValue) {
-            for (int index = 1, length = _size * SlotsPerEntry; index < length; index += SlotsPerEntry) {
-                final Object value = _pairsArray[index];
-                if (value == targetValue || value != null && value.equals(targetValue)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public Set<K> keySet() {
-            final Set<K> keySet = new HashSet<K>();
-            for (int index = 0, length = _size * SlotsPerEntry; index < length; index += SlotsPerEntry) {
-                @SuppressWarnings("unchecked")
-                final K key = (K)_pairsArray[index];
-                keySet.add(key);
-            }
-            return keySet;
-        }
-
-        @Override
-        public Collection<V> values() {
-            final Collection<V> values = new ArrayList<V>();
-            for (int index = 1, length = _size * SlotsPerEntry; index < length; index += SlotsPerEntry) {
-                @SuppressWarnings("unchecked")
-                final V value = (V)_pairsArray[index];
-                values.add(value);
-            }
-            return values;
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public Set<Entry<K, V>> entrySet() {
-            final Set<Entry<K, V>> entrySet = new HashSet<Entry<K, V>>();
-            for (int index = 0, length = _size * SlotsPerEntry; index < length; index += SlotsPerEntry) {
-                final K key = (K)_pairsArray[index];
-                final V value = (V)_pairsArray[index + 1];
-                final Entry<K, V> entry = new SimpleImmutableEntry<K, V>(key, value);
-                entrySet.add(entry);
-            }
-            return entrySet;
-        }
-
-        @Override
-        public V remove(final Object key) {
-            throw new UnsupportedOperationException("Will never be supported");
-        }
-
-        @Override
-        public void putAll(final Map map) {
-            throw new UnsupportedOperationException("Currently not supported");
-        }
-
-        @Override
-        public void clear() {
-            throw new UnsupportedOperationException("Currently not supported");
-        }
-
-    }
-
 }
